@@ -22,6 +22,7 @@
 #     "transformers>=4.56.2",
 #     "accelerate>=1.4.0",
 #     "vllm>=0.17.0,<=0.25.1",
+#     "kernels==0.16.0",
 #     "openenv @ git+https://github.com/huggingface/OpenEnv.git",
 #     "openenv-opencode-env @ git+https://github.com/huggingface/OpenEnv.git#subdirectory=envs/opencode_env",
 # ]
