@@ -13,10 +13,7 @@
 #   "openenv-opencode-env @ git+https://github.com/huggingface/OpenEnv.git#subdirectory=envs/opencode_env",
 # ]
 # ///
-"""Tiny RailroadHarness smoke job for HF Jobs (2 GPUs: vLLM + AsyncGRPO).
-
-Critical: vLLM logs go to a file (never an undrained PIPE — that deadlocks startup).
-"""
+"""Tiny RailroadHarness smoke job for HF Jobs (2 GPUs: vLLM + AsyncGRPO)."""
 
 from __future__ import annotations
 
@@ -39,6 +36,7 @@ VLLM_PORT = int(os.environ.get("RAILROAD_VLLM_PORT", "8000"))
 VLLM_URL = f"http://127.0.0.1:{VLLM_PORT}"
 WORKDIR = Path("/tmp/railroad-harness-job")
 VLLM_LOG = WORKDIR / "vllm.log"
+TRAIN_LOG = WORKDIR / "trainer.log"
 
 
 def log(msg: str) -> None:
@@ -47,7 +45,7 @@ def log(msg: str) -> None:
 
 def tail_file(path: Path, n: int = 80) -> str:
     if not path.exists():
-        return "(no log file)"
+        return f"(no log file: {path})"
     lines = path.read_text(errors="replace").splitlines()
     return "\n".join(lines[-n:])
 
@@ -93,7 +91,10 @@ def preflight() -> None:
 
 def main() -> int:
     os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
+    os.environ.setdefault("HF_DEBUG", "1")
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
     log(f"Model={MODEL} n_prompts={N_PROMPTS} gens={NUM_GENERATIONS} steps={MAX_STEPS}")
+    log(f"HF_TOKEN present: {bool(os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN'))}")
     preflight()
     WORKDIR.mkdir(parents=True, exist_ok=True)
     repo_dir = WORKDIR / "RailroadHarness"
@@ -161,8 +162,16 @@ def main() -> int:
         train_env = os.environ.copy()
         train_env["CUDA_VISIBLE_DEVICES"] = "1"
         train_env["TRL_EXPERIMENTAL_SILENCE"] = "1"
+        train_env["HF_DEBUG"] = "1"
+        train_env["PYTHONUNBUFFERED"] = "1"
+        # Ensure hub auth reaches the trainer child
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        if token:
+            train_env["HF_TOKEN"] = token
+            train_env["HUGGING_FACE_HUB_TOKEN"] = token
         train_cmd = [
             sys.executable,
+            "-u",
             "train_railroad_local.py",
             "--model",
             MODEL,
@@ -181,11 +190,21 @@ def main() -> int:
             "--project",
             "railroad-harness-tiny",
         ]
-        log(f"Starting trainer on CUDA:1: {' '.join(train_cmd)}")
-        train = subprocess.run(train_cmd, cwd=str(repo_dir), env=train_env, check=False)
+        log(f"Starting trainer on CUDA:1 (logs -> {TRAIN_LOG}): {' '.join(train_cmd)}")
+        with open(TRAIN_LOG, "w", encoding="utf-8") as train_f:
+            train = subprocess.run(
+                train_cmd,
+                cwd=str(repo_dir),
+                env=train_env,
+                check=False,
+                stdout=train_f,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
         log(f"Trainer exited with code {train.returncode}")
+        log(f"--- trainer.log tail ---\n{tail_file(TRAIN_LOG, 120)}")
         if train.returncode != 0:
-            log(f"vLLM log tail on trainer failure:\n{tail_file(VLLM_LOG, 60)}")
+            log(f"--- vllm.log tail ---\n{tail_file(VLLM_LOG, 40)}")
         return train.returncode
     except Exception as exc:  # noqa: BLE001
         log(f"FATAL: {exc}")
