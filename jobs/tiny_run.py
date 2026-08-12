@@ -2,6 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #   "trl @ git+https://github.com/huggingface/trl.git",
+#   "wandb",
 #   "trackio",
 #   "datasets>=4.7.0",
 #   "transformers>=4.56.2",
@@ -96,6 +97,7 @@ def main() -> int:
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
     log(f"Model={MODEL} n_prompts={N_PROMPTS} gens={NUM_GENERATIONS} steps={MAX_STEPS}")
     log(f"HF_TOKEN present: {bool(os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN'))}")
+    log(f"WANDB_API_KEY present: {bool(os.environ.get('WANDB_API_KEY'))}")
     preflight()
     WORKDIR.mkdir(parents=True, exist_ok=True)
     repo_dir = WORKDIR / "RailroadHarness"
@@ -170,6 +172,11 @@ def main() -> int:
         if token:
             train_env["HF_TOKEN"] = token
             train_env["HUGGING_FACE_HUB_TOKEN"] = token
+        wandb_key = os.environ.get("WANDB_API_KEY")
+        if wandb_key:
+            train_env["WANDB_API_KEY"] = wandb_key
+        report_to = os.environ.get("RAILROAD_REPORT_TO", "wandb" if wandb_key else "trackio")
+        train_env["WANDB_PROJECT"] = os.environ.get("WANDB_PROJECT", "railroad-harness-tiny")
         train_cmd = [
             sys.executable,
             "-u",
@@ -189,8 +196,11 @@ def main() -> int:
             "--output-dir",
             str(WORKDIR / "outputs"),
             "--project",
-            "railroad-harness-tiny",
+            os.environ.get("WANDB_PROJECT", "railroad-harness-tiny"),
+            "--report-to",
+            report_to,
         ]
+        log(f"Trainer report_to={report_to} wandb_key={'yes' if wandb_key else 'no'}")
         log(f"Starting trainer on CUDA:1 (logs -> {TRAIN_LOG}): {' '.join(train_cmd)}")
         with open(TRAIN_LOG, "w", encoding="utf-8") as train_f:
             train = subprocess.run(
