@@ -30,11 +30,13 @@ from pathlib import Path
 
 REPO = "https://github.com/HarleyCoops/RailroadHarness.git"
 MODEL = os.environ.get("RAILROAD_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
-N_PROMPTS = int(os.environ.get("RAILROAD_N_PROMPTS", "8"))
-NUM_GENERATIONS = int(os.environ.get("RAILROAD_NUM_GENERATIONS", "2"))
-MAX_STEPS = int(os.environ.get("RAILROAD_MAX_STEPS", "5"))
-MAX_INFLIGHT = int(os.environ.get("RAILROAD_MAX_INFLIGHT", "2"))
+N_PROMPTS = int(os.environ.get("RAILROAD_N_PROMPTS", "2"))
+NUM_GENERATIONS = int(os.environ.get("RAILROAD_NUM_GENERATIONS", "1"))
+MAX_STEPS = int(os.environ.get("RAILROAD_MAX_STEPS", "2"))
+MAX_INFLIGHT = int(os.environ.get("RAILROAD_MAX_INFLIGHT", "1"))
 VLLM_PORT = int(os.environ.get("RAILROAD_VLLM_PORT", "8000"))
+MAX_COMPLETION = int(os.environ.get("RAILROAD_MAX_COMPLETION_LENGTH", "2048"))
+MAX_MODEL_LEN = int(os.environ.get("RAILROAD_MAX_MODEL_LEN", "4096"))
 VLLM_URL = f"http://127.0.0.1:{VLLM_PORT}"
 WORKDIR = Path("/tmp/railroad-harness-job")
 VLLM_LOG = WORKDIR / "vllm.log"
@@ -95,7 +97,7 @@ def main() -> int:
     os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
     os.environ.setdefault("HF_DEBUG", "1")
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
-    log(f"Model={MODEL} n_prompts={N_PROMPTS} gens={NUM_GENERATIONS} steps={MAX_STEPS}")
+    log(f"Model={MODEL} n_prompts={N_PROMPTS} gens={NUM_GENERATIONS} steps={MAX_STEPS} max_completion={MAX_COMPLETION} max_model_len={MAX_MODEL_LEN}")
     log(f"HF_TOKEN present: {bool(os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN'))}")
     log(f"WANDB_API_KEY present: {bool(os.environ.get('WANDB_API_KEY'))}")
     preflight()
@@ -126,7 +128,7 @@ def main() -> int:
         "--gpu-memory-utilization",
         os.environ.get("RAILROAD_GPU_MEM_UTIL", "0.85"),
         "--max-model-len",
-        os.environ.get("RAILROAD_MAX_MODEL_LEN", "16384"),
+        str(MAX_MODEL_LEN),
     ]
     vllm_env = os.environ.copy()
     vllm_env["CUDA_VISIBLE_DEVICES"] = "0"
@@ -176,7 +178,15 @@ def main() -> int:
         if wandb_key:
             train_env["WANDB_API_KEY"] = wandb_key
         report_to = os.environ.get("RAILROAD_REPORT_TO", "wandb" if wandb_key else "trackio")
-        train_env["WANDB_PROJECT"] = os.environ.get("WANDB_PROJECT", "railroad-harness-tiny")
+        wandb_project = os.environ.get("WANDB_PROJECT", "railroad-harness-tiny")
+        train_env["WANDB_PROJECT"] = wandb_project
+        train_env["WANDB_NAME"] = os.environ.get(
+            "WANDB_NAME",
+            f"tiny-n{N_PROMPTS}-g{NUM_GENERATIONS}-s{MAX_STEPS}",
+        )
+        # Ensure online logging (not disabled/offline) when a key is present
+        if wandb_key:
+            train_env.setdefault("WANDB_MODE", os.environ.get("WANDB_MODE", "online"))
         train_cmd = [
             sys.executable,
             "-u",
@@ -193,14 +203,19 @@ def main() -> int:
             str(MAX_STEPS),
             "--max-inflight",
             str(MAX_INFLIGHT),
+            "--max-completion-length",
+            str(MAX_COMPLETION),
             "--output-dir",
             str(WORKDIR / "outputs"),
             "--project",
-            os.environ.get("WANDB_PROJECT", "railroad-harness-tiny"),
+            wandb_project,
             "--report-to",
             report_to,
         ]
-        log(f"Trainer report_to={report_to} wandb_key={'yes' if wandb_key else 'no'}")
+        log(
+            f"Trainer report_to={report_to} wandb_key={'yes' if wandb_key else 'no'} "
+            f"project={wandb_project} name={train_env.get('WANDB_NAME')}"
+        )
         log(f"Starting trainer on CUDA:1 (logs -> {TRAIN_LOG}): {' '.join(train_cmd)}")
         with open(TRAIN_LOG, "w", encoding="utf-8") as train_f:
             train = subprocess.run(
