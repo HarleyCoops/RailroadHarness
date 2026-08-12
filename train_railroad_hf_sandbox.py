@@ -17,6 +17,7 @@
 # /// script
 # dependencies = [
 #     "trl @ git+https://github.com/huggingface/trl.git",
+#     "wandb",
 #     "trackio",
 #     "datasets>=4.7.0",
 #     "transformers>=4.56.2",
@@ -340,6 +341,12 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--output-dir", default="async_grpo_railroad_hf_sandbox")
     p.add_argument("--project", default="railroad-hf-sandbox")
+    p.add_argument(
+        "--report-to",
+        default="wandb",
+        choices=["wandb", "trackio", "none"],
+        help="Experiment logger (default: wandb).",
+    )
     p.add_argument("--trackio-space-id", default=None)
     p.add_argument("--push-to-hub", action="store_true")
     p.add_argument("--hub-model-id", default=None)
@@ -368,9 +375,9 @@ def main() -> None:
         temperature=args.temperature,
         max_staleness=args.max_staleness,
         vllm_server_base_url=args.vllm_url,
-        report_to="trackio",
+        report_to=None if args.report_to == "none" else args.report_to,
         project=args.project,
-        trackio_space_id=args.trackio_space_id,
+        trackio_space_id=args.trackio_space_id if args.report_to == "trackio" else None,
         log_completions=True,
         optim=args.optim,
         gradient_checkpointing=args.gradient_checkpointing,
