@@ -1,13 +1,13 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "trl",
+#   "trl @ git+https://github.com/huggingface/trl.git",
 #   "trackio",
-#   "datasets",
-#   "transformers",
-#   "accelerate",
+#   "datasets>=4.7.0",
+#   "transformers>=4.56.2",
+#   "accelerate>=1.4.0",
 #   "huggingface_hub>=0.22",
-#   "vllm",
+#   "vllm>=0.17.0,<=0.25.1",
 #   "torch",
 #   "openenv @ git+https://github.com/huggingface/OpenEnv.git",
 #   "openenv-opencode-env @ git+https://github.com/huggingface/OpenEnv.git#subdirectory=envs/opencode_env",
@@ -15,8 +15,9 @@
 # ///
 """Tiny RailroadHarness smoke job for HF Jobs (2 GPUs: vLLM + AsyncGRPO).
 
-Launches vLLM on CUDA:0, then train_railroad_local.py on CUDA:1 against
-HarleyCooper/volume2gym-railroad-1959 with a small prompt/step budget.
+Installs TRL from git (PyPI wheels omit openenv_harness) and pins vLLM to the
+range TRL supports. Launches vLLM on CUDA:0, then train_railroad_local.py on
+CUDA:1 against HarleyCooper/volume2gym-railroad-1959.
 """
 
 from __future__ import annotations
@@ -62,8 +63,21 @@ def wait_for_vllm(url: str, timeout_s: int = 900) -> None:
     raise RuntimeError(f"vLLM did not become ready within {timeout_s}s at {url}")
 
 
+def preflight() -> None:
+    """Fail fast if the harness module still isn't present."""
+    try:
+        import trl  # noqa: F401
+        from trl.experimental.async_grpo.openenv_harness import HarnessRolloutWorker  # noqa: F401
+
+        log(f"preflight ok: trl={trl.__version__} has openenv_harness")
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"preflight failed (need TRL from git with openenv_harness): {exc}") from exc
+
+
 def main() -> int:
+    os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
     log(f"Model={MODEL} n_prompts={N_PROMPTS} gens={NUM_GENERATIONS} steps={MAX_STEPS}")
+    preflight()
     WORKDIR.mkdir(parents=True, exist_ok=True)
     repo_dir = WORKDIR / "RailroadHarness"
     if not repo_dir.exists():
@@ -119,6 +133,7 @@ def main() -> int:
         wait_for_vllm(VLLM_URL)
         train_env = os.environ.copy()
         train_env["CUDA_VISIBLE_DEVICES"] = "1"
+        train_env["TRL_EXPERIMENTAL_SILENCE"] = "1"
         train_cmd = [
             sys.executable,
             "train_railroad_local.py",
@@ -146,7 +161,6 @@ def main() -> int:
     finally:
         _shutdown()
         if vllm_proc.stdout is not None:
-            # Drain a bit of vLLM log for debugging if it failed early
             try:
                 leftover = vllm_proc.stdout.read()
                 if leftover:
