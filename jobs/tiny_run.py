@@ -15,9 +15,7 @@
 # ///
 """Tiny RailroadHarness smoke job for HF Jobs (2 GPUs: vLLM + AsyncGRPO).
 
-Installs TRL from git (PyPI wheels omit openenv_harness) and pins vLLM to the
-range TRL supports. Launches vLLM on CUDA:0, then train_railroad_local.py on
-CUDA:1 against HarleyCooper/volume2gym-railroad-1959.
+Critical: vLLM logs go to a file (never an undrained PIPE — that deadlocks startup).
 """
 
 from __future__ import annotations
@@ -40,17 +38,31 @@ MAX_INFLIGHT = int(os.environ.get("RAILROAD_MAX_INFLIGHT", "2"))
 VLLM_PORT = int(os.environ.get("RAILROAD_VLLM_PORT", "8000"))
 VLLM_URL = f"http://127.0.0.1:{VLLM_PORT}"
 WORKDIR = Path("/tmp/railroad-harness-job")
+VLLM_LOG = WORKDIR / "vllm.log"
 
 
 def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def wait_for_vllm(url: str, timeout_s: int = 900) -> None:
+def tail_file(path: Path, n: int = 80) -> str:
+    if not path.exists():
+        return "(no log file)"
+    lines = path.read_text(errors="replace").splitlines()
+    return "\n".join(lines[-n:])
+
+
+def wait_for_vllm(url: str, proc: subprocess.Popen, timeout_s: int = 900) -> None:
     health = f"{url}/health"
     models = f"{url}/v1/models"
     deadline = time.time() + timeout_s
+    last_heartbeat = 0.0
     while time.time() < deadline:
+        rc = proc.poll()
+        if rc is not None:
+            raise RuntimeError(
+                f"vLLM exited early with code {rc}. Tail of {VLLM_LOG}:\n{tail_file(VLLM_LOG, 120)}"
+            )
         for endpoint in (health, models):
             try:
                 with urllib.request.urlopen(endpoint, timeout=5) as resp:
@@ -59,12 +71,17 @@ def wait_for_vllm(url: str, timeout_s: int = 900) -> None:
                         return
             except (urllib.error.URLError, TimeoutError, ConnectionError):
                 pass
+        now = time.time()
+        if now - last_heartbeat > 30:
+            log(f"still waiting for vLLM... ({int(deadline - now)}s left)")
+            last_heartbeat = now
         time.sleep(5)
-    raise RuntimeError(f"vLLM did not become ready within {timeout_s}s at {url}")
+    raise RuntimeError(
+        f"vLLM did not become ready within {timeout_s}s at {url}. Tail of {VLLM_LOG}:\n{tail_file(VLLM_LOG, 120)}"
+    )
 
 
 def preflight() -> None:
-    """Fail fast if the harness module still isn't present."""
     try:
         import trl  # noqa: F401
         from trl.experimental.async_grpo.openenv_harness import HarnessRolloutWorker  # noqa: F401
@@ -102,17 +119,22 @@ def main() -> int:
         "--return-tokens-as-token-ids",
         "--weight-transfer-config",
         '{"backend":"nccl"}',
+        "--gpu-memory-utilization",
+        os.environ.get("RAILROAD_GPU_MEM_UTIL", "0.85"),
+        "--max-model-len",
+        os.environ.get("RAILROAD_MAX_MODEL_LEN", "16384"),
     ]
     vllm_env = os.environ.copy()
     vllm_env["CUDA_VISIBLE_DEVICES"] = "0"
     vllm_env["VLLM_SERVER_DEV_MODE"] = "1"
 
-    log("Starting vLLM on CUDA:0 ...")
+    log(f"Starting vLLM on CUDA:0 (logs -> {VLLM_LOG}) ...")
+    log_f = open(VLLM_LOG, "w", encoding="utf-8")
     vllm_proc = subprocess.Popen(
         vllm_cmd,
         cwd=str(repo_dir),
         env=vllm_env,
-        stdout=subprocess.PIPE,
+        stdout=log_f,
         stderr=subprocess.STDOUT,
         text=True,
     )
@@ -125,12 +147,17 @@ def main() -> int:
                 vllm_proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 vllm_proc.kill()
+        try:
+            log_f.flush()
+            log_f.close()
+        except Exception:
+            pass
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
     try:
-        wait_for_vllm(VLLM_URL)
+        wait_for_vllm(VLLM_URL, vllm_proc)
         train_env = os.environ.copy()
         train_env["CUDA_VISIBLE_DEVICES"] = "1"
         train_env["TRL_EXPERIMENTAL_SILENCE"] = "1"
@@ -157,17 +184,14 @@ def main() -> int:
         log(f"Starting trainer on CUDA:1: {' '.join(train_cmd)}")
         train = subprocess.run(train_cmd, cwd=str(repo_dir), env=train_env, check=False)
         log(f"Trainer exited with code {train.returncode}")
+        if train.returncode != 0:
+            log(f"vLLM log tail on trainer failure:\n{tail_file(VLLM_LOG, 60)}")
         return train.returncode
+    except Exception as exc:  # noqa: BLE001
+        log(f"FATAL: {exc}")
+        return 1
     finally:
         _shutdown()
-        if vllm_proc.stdout is not None:
-            try:
-                leftover = vllm_proc.stdout.read()
-                if leftover:
-                    log("--- vLLM log (tail) ---")
-                    log(leftover[-4000:])
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":
