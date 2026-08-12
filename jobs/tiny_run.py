@@ -8,6 +8,7 @@
 #   "accelerate>=1.4.0",
 #   "huggingface_hub>=0.22",
 #   "vllm>=0.17.0,<=0.25.1",
+#   "kernels==0.16.0",
 #   "torch",
 #   "openenv @ git+https://github.com/huggingface/OpenEnv.git",
 #   "openenv-opencode-env @ git+https://github.com/huggingface/OpenEnv.git#subdirectory=envs/opencode_env",
