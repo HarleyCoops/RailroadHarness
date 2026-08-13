@@ -535,6 +535,21 @@ def main() -> None:
     print(f"[RailroadHarness] Model: {args.model}")
     print(f"[RailroadHarness] report_to={args.report_to} project={args.project}")
 
+    if args.report_to == "wandb":
+        import os
+
+        import wandb
+
+        key = os.environ.get("WANDB_API_KEY")
+        if not key:
+            raise SystemExit(
+                "report_to=wandb but WANDB_API_KEY is missing in the environment"
+            )
+        # Explicit login — env alone can leave transformers' WandbCallback with
+        # "user is not logged in" on some Jobs images.
+        logged = wandb.login(key=key, relogin=True, verify=True)
+        print(f"[RailroadHarness] wandb.login ok={logged} entity={wandb.Api().default_entity}")
+
     config = AsyncGRPOConfig(
         output_dir=args.output_dir,
         save_strategy="no",
