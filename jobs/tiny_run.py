@@ -177,6 +177,14 @@ def main() -> int:
         wandb_key = os.environ.get("WANDB_API_KEY")
         if wandb_key:
             train_env["WANDB_API_KEY"] = wandb_key
+            # Fail fast in the launcher if the key is rejected (avoid 3min boot then die).
+            try:
+                import wandb  # type: ignore
+
+                ok = wandb.login(key=wandb_key, relogin=True, verify=True)
+                log(f"Launcher wandb.login ok={ok}")
+            except Exception as exc:  # noqa: BLE001
+                raise SystemExit(f"WANDB_API_KEY present but wandb.login failed: {exc}") from exc
         report_to = os.environ.get("RAILROAD_REPORT_TO", "wandb" if wandb_key else "trackio")
         wandb_project = os.environ.get("WANDB_PROJECT", "railroad-harness-tiny")
         train_env["WANDB_PROJECT"] = wandb_project
