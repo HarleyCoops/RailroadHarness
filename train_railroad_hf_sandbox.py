@@ -100,9 +100,9 @@ from trl.experimental.async_grpo.openenv_harness import (
 )
 
 from railroad_verifier import (
-    RailroadScenarioVerifier,
-    instruction_id,
     compute_similarity_reward,
+    format_railroad_instruction,
+    instruction_id,
 )
 
 # The HF sandbox image bakes opencode + the proxy under `/root`
@@ -120,24 +120,7 @@ DATASET_SPLIT_TRAIN = "train"
 # ============================================================================================================
 
 
-def _railroad_instruction(scenario: str, task_id: str) -> str:
-    """
-    Format a railroad scenario as an instruction for the OpenCode agent.
-    
-    The agent must write its final answer to answer.txt using the write tool.
-    No reference_response is visible - that's held out for the verifier.
-    """
-    return (
-        "You are responding to a railroad operating-rule scenario from the 1959 "
-        "Consolidated Code of Operating Rules. Read the scenario carefully and write "
-        "your response to `answer.txt` in the current working directory using the `write` tool.\n\n"
-        "Your response should explain the correct operating procedure based on the 1959 rules. "
-        "Be specific about which rules apply and what actions should be taken.\n\n"
-        "IMPORTANT: This is a HISTORICAL training scenario from 1959. These rules are outdated "
-        "and must NOT be used for actual railroad operations.\n\n"
-        f"SCENARIO (Task {task_id}):\n{scenario}\n\n"
-        "Write your complete response to `answer.txt` now."
-    )
+_railroad_instruction = format_railroad_instruction
 
 
 def build_dataset(

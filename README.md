@@ -14,9 +14,9 @@ RailroadHarness is a learning example that adapts Hugging Face TRL's [OpenCode h
 
 **What this repo provides:**
 - Training scripts for local subprocess and remote HF sandbox modes
-- A deterministic verifier using normalized exact match / token F1 scoring
+- A deterministic verifier that loads the official Hub `test` split (or a committed fixture subset of that split) and scores `answer.txt` with normalized exact match / token F1
 - Documentation mapping DeepCoder concepts to the railroad domain
-- Unit tests for the scoring logic
+- Unit tests for scoring primitives plus held-out load + dummy-answer scoring
 
 **What this repo does NOT provide:**
 - A production RL system
@@ -122,7 +122,7 @@ pip install -e ".[dev]"
 ### Run Tests
 
 ```bash
-pytest tests/test_verifier.py -v
+pytest tests/test_verifier.py tests/test_heldout_verifier.py -v
 ```
 
 ### Local Training (2 GPUs)
@@ -188,35 +188,52 @@ RailroadHarness/
 ├── pyproject.toml                 # Package configuration
 ├── .gitignore
 │
-├── railroad_verifier.py           # Scoring logic + verifier class
+├── railroad_verifier.py           # Scoring logic + held-out loader + verifier
 ├── train_railroad_local.py        # Local subprocess training
 ├── train_railroad_hf_sandbox.py   # Remote HF sandbox training
 ├── launcher.py                    # Optional HF Jobs launcher
+│
+├── fixtures/
+│   ├── volume2gym-railroad-1959.test.heldout.jsonl
+│   └── volume2gym-railroad-1959.test.heldout.meta.json
 │
 ├── docs/
 │   └── LEARNING_NOTES.md          # Detailed learning guide
 │
 └── tests/
     ├── __init__.py
-    └── test_verifier.py           # Unit tests for verifier
+    ├── test_verifier.py           # Unit tests for scoring primitives
+    └── test_heldout_verifier.py   # Load official test-split fixture + score dummy answers
 ```
 
 ## Scoring Details
 
 The verifier implements the scoring approach from the [volume2gym dataset card](https://huggingface.co/datasets/HarleyCooper/volume2gym-railroad-1959):
 
-1. **Normalize**: Lowercase, collapse whitespace, strip
-2. **Exact match check**: If normalized texts match → reward = 1.0
-3. **Token F1 fallback**: Whitespace-token multiset F1 for partial credit
+1. **Load held-out rows**: official Hub split `HarleyCooper/volume2gym-railroad-1959` / config `default` / split `test` (270 rows). Offline tests use the committed fixture `fixtures/volume2gym-railroad-1959.test.heldout.jsonl` — the first 8 rows of `data/test.jsonl` (task IDs `812-001`, `S-H(1)-002`, `307-004`, `819-002`, `958-001`, `95-002`, `23-005`, `606-004`; Hub revision `2c7fdb9ad485c49b13e0e714c744b411f5ae983e`).
+2. **Normalize**: Lowercase, collapse whitespace, strip
+3. **Exact match check**: If normalized texts match → reward = 1.0
+4. **Token F1 fallback**: Whitespace-token multiset F1 for partial credit
+5. **Missing `answer.txt`**: reward = 0.0
 
 ```python
-from railroad_verifier import compute_similarity_reward
+from railroad_verifier import (
+    RailroadScenarioVerifier,
+    compute_similarity_reward,
+    load_held_out_subset,
+)
 
 # Exact match
 compute_similarity_reward("Stop the train.", "stop the train")  # → 1.0
 
 # Partial match (F1)
 compute_similarity_reward("Stop the train.", "Stop immediately.")  # → ~0.4
+
+# Held-out load + dummy answer (uses committed test-split fixture if Hub is unavailable)
+subset = load_held_out_subset(prefer_hub=False)
+verifier = RailroadScenarioVerifier.from_held_out(subset)
+row = subset.rows[0]
+verifier.score_directly(row.reference_response, row.reference_response)  # → 1.0
 ```
 
 ## Configuration Options
