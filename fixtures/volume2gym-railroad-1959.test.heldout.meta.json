@@ -1,0 +1,21 @@
+{
+  "dataset_id": "HarleyCooper/volume2gym-railroad-1959",
+  "config": "default",
+  "split": "test",
+  "hub_path": "data/test.jsonl",
+  "hub_revision": "2c7fdb9ad485c49b13e0e714c744b411f5ae983e",
+  "row_offset": 0,
+  "row_count": 8,
+  "selection": "first 8 rows of the official Hub test split (data/test.jsonl)",
+  "task_ids": [
+    "812-001",
+    "S-H(1)-002",
+    "307-004",
+    "819-002",
+    "958-001",
+    "95-002",
+    "23-005",
+    "606-004"
+  ],
+  "historical_warning": "These are 1959 rules that may conflict with current regulations, technology, and safe practice. Do NOT treat them as operational advice."
+}
